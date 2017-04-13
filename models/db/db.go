@@ -15,15 +15,15 @@ import (
 
 type DB interface {
 	// statement
-	Select(fields ...string)
-	Where(field string, value interface{})
+	Select(fields ...string) *DBase
+	Where(field string, value interface{}) *DBase
 	//OrWhere(field string, value interface{})
-	From(table string)
-	Limit(start, length int)
+	From(table string) *DBase
+	Limit(start, length int) *DBase
 
 	// operation
 	Query() (*sql.Rows, error)
-	Insert(...interface{}) (int64, error)
+	Insert(values map[string]interface{}) (int64, error)
 	Delete() error
 	Update()
 	Count() (int64, error)
@@ -91,16 +91,16 @@ func (this *DBase) SetDefaultTable(name string) {
 }
 
 func (this *DBase) Query() (*sql.Rows, error) {
-	if stirngs.Contains(this.q_stat, "[table]") {
+	if strings.Contains(this.q_stat, "[table]") {
 		this.q_stat = strings.Replace(this.q_stat, "[table]", this.table, 1)
 	}
+	logs.Debug("DB Query Sql: ", this.q_stat)
 
+	defer this._ResetStat()
 	rows, err := this.db.Query(this.q_stat)
 	if err != nil {
 		return nil, err
 	}
-
-	this._ResetStat()
 
 	return rows, nil
 }
@@ -108,17 +108,17 @@ func (this *DBase) Query() (*sql.Rows, error) {
 func (this *DBase) Count() (int64, error) {
 	var count int64
 
-	if stirngs.Contains(this.q_stat, "[table]") {
+	if strings.Contains(this.q_stat, "[table]") {
 		this.q_stat = strings.Replace(this.q_stat, "[table]", this.table, 1)
 	}
 	this.q_stat = strings.Replace(this.q_stat, "*", "COUNT(*)", 1)
+	logs.Debug("DB Count Sql: ", this.q_stat)
 
+	defer this._ResetStat()
 	err := this.db.QueryRow(this.q_stat).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
-
-	this._ResetStat()
 
 	return count, nil
 }
@@ -136,11 +136,12 @@ func (this *DBase) Exist() (bool, error) {
 }
 
 func (this *DBase) Delete() error {
-	if stirngs.Contains(this.d_stat, "[table]") {
+	if strings.Contains(this.d_stat, "[table]") {
 		this.d_stat = strings.Replace(this.d_stat, "[table]", this.table, 1)
 	}
-	logs.Debug(this.d_stat)
+	logs.Debug("DB Delete Sql: ", this.d_stat)
 
+	defer this._ResetStat()
 	stmt, err := this.db.Prepare(this.d_stat)
 	if err != nil {
 		return err
@@ -159,30 +160,38 @@ func (this *DBase) Update() {
 
 }
 
-func (this *DBase) Insert(args ...interface{}) (int64, error) {
-	l := len(args)
+func (this *DBase) Insert(values map[string]interface{}) (int64, error) {
+	l := len(values)
 	if l == 0 {
 		return 0, MyErr.New(MyErr.DB_INSERT_MISS_VALUES, "miss values in insert statement.")
 	}
 
 	var marks []string
-	for i := 1; i <= l; i++ {
+	var keys []string
+	var vals []interface{}
+	var i int = 0
+	for k, v := range values {
+		i++
 		if this.d == "postgres" {
 			marks = append(marks, "$"+strconv.Itoa(i))
 		} else {
 			marks = append(marks, "?")
 		}
+		keys = append(keys, k)
+		vals = append(vals, v)
 	}
 	marks_str := strings.Join(marks, ",")
-	stmt_str := "INSERT INTO " + this.table + " VALUES(" + marks_str + ")"
-	//logs.Debug(stmt_str)
+	keys_str := strings.Join(keys, ",")
+	keys_str = "(" + keys_str + ")"
+	stmt_str := "INSERT INTO " + this.table + keys_str + " VALUES(" + marks_str + ")"
+	logs.Debug("DB Insert Sql: ", stmt_str)
 	stmt, err := this.db.Prepare(stmt_str)
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(args...)
+	res, err := stmt.Exec(vals...)
 	if err != nil {
 		return 0, err
 	}
@@ -206,7 +215,7 @@ func (this *DBase) Select(fields ...string) *DBase {
 	return this
 }
 
-func (this *DBase) Where(field string, value interface{}) *Dbase {
+func (this *DBase) Where(field string, value interface{}) *DBase {
 	is_first := false
 	if !strings.Contains(this.q_stat, "WHERE") {
 		is_first = true

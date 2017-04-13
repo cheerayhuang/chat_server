@@ -3,13 +3,7 @@ package models
 import (
 	"chat_server/models/db"
 
-	"database/sql"
-	"io/ioutil"
-	"net/http"
-	"strconv"
-
 	"github.com/astaxie/beego/logs"
-	"github.com/bitly/go-simplejson"
 )
 
 const (
@@ -96,7 +90,12 @@ func AddUser(name, password string) int64 {
 	}
 
 	if !is_exist {
-		id, err := mysql.Insert(name, password, USER_NORMAL_TYPE)
+		data := map[string]interface{}{
+			"user_name": name,
+			"passwd":    password,
+			"user_type": USER_NORMAL_TYPE,
+		}
+		id, err := mysql.Insert(data)
 		if err != nil {
 			logs.Error("db Insert operation failed. Error: ", err.Error())
 			return 0
@@ -148,6 +147,10 @@ func ListUser(start, length int) []string {
 
 	users := make([]string, 0)
 	rows, err := mysql.Select("user_name").Limit(start, length).Query()
+	if err != nil {
+		logs.Error("db Query operation failed. Error: ", err.Error())
+		return users
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var user string
