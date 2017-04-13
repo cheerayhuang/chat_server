@@ -1,30 +1,58 @@
 package controllers
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
-
 	"chat_server/models"
 
+	"net/http"
+
 	"github.com/astaxie/beego"
+	"github.com/astaxie/beego/logs"
+
 	"github.com/bitly/go-simplejson"
 	"github.com/gorilla/websocket"
 )
 
 const (
-	PARSE_JSON_ERR = 1000
-	MISS_PARAM_ERR = 1100
-	CMD_TYPE_ERR   = 1200
-	PERMISSION_ERR = 1300
-	LOGIN_ERR      = 2000
+	PARSE_JSON_ERR  = 1000
+	MISS_PARAM_ERR  = 1100
+	CMD_TYPE_ERR    = 1200
+	PERMISSION_ERR  = 1300
+	LOGIN_ERR       = 2000
+	ADD_USER_ERR    = 3000
+	DELETE_USER_ERR = 4000
+)
 
+const (
+	WS_READ_BUFFER_SIZE  = 1024
+	WS_WRITE_BUFFER_SIZE = 1024
+)
+
+var (
 	ERR_REPLYS = map[int]string{
-		PARSE_JSON_ERR: "Message is NOT in JSON format.",
-		MISS_PARAM_ERR: "Miss parameters in JSON.",
-		CMD_TYPE_ERR:   "Unknown command type.",
-		LOGIN_ERR:      "Login failed. User does NOT exist or password is Wrong.",
-		PERMISSION_ERR: "No user login or the user doesn't have permisson to exec this command.",
+		PARSE_JSON_ERR:  "Message is NOT in JSON format.",
+		MISS_PARAM_ERR:  "Miss parameters in JSON.",
+		CMD_TYPE_ERR:    "Unknown command type.",
+		PERMISSION_ERR:  "No user login or the user doesn't have permisson to exec this command.",
+		LOGIN_ERR:       "Login failed. User does NOT exist or password is Wrong.",
+		ADD_USER_ERR:    "Add user failed. Maybe user name is duplicated.",
+		DELETE_USER_ERR: "Delete user failed.",
+	}
+
+	WS_CLOSE_ERROR = []int{
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseProtocolError,
+		websocket.CloseUnsupportedData,
+		websocket.CloseNoStatusReceived,
+		websocket.CloseAbnormalClosure,
+		websocket.CloseInvalidFramePayloadData,
+		websocket.ClosePolicyViolation,
+		websocket.CloseMessageTooBig,
+		websocket.CloseMandatoryExtension,
+		websocket.CloseInternalServerErr,
+		websocket.CloseServiceRestart,
+		websocket.CloseTryAgainLater,
+		websocket.CloseTLSHandshake,
 	}
 )
 
@@ -48,7 +76,7 @@ func (this *ChatController) ErrReply(err_code int) {
 }
 
 func (this *ChatController) Reply(j *simplejson.Json) {
-	if this.ws {
+	if this.ws != nil {
 		data, err := j.MarshalJSON()
 		if err != nil {
 			logs.Error("MarshalJSON failed.")
@@ -64,7 +92,7 @@ func (this *ChatController) Reply(j *simplejson.Json) {
 func (this *ChatController) WSConnect() {
 
 	// Upgrade from http request to WebSocket.
-	ws, err := websocket.Upgrade(this.Ctx.ResponseWriter, this.Ctx.Request, nil, 1024, 1024)
+	ws, err := websocket.Upgrade(this.Ctx.ResponseWriter, this.Ctx.Request, nil, WS_READ_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE)
 	if _, ok := err.(websocket.HandshakeError); ok {
 		http.Error(this.Ctx.ResponseWriter, "Not a websocket handshake", 400)
 		return
@@ -75,12 +103,18 @@ func (this *ChatController) WSConnect() {
 	this.ws = ws
 	this.cur_cmd = ""
 	this.cur_user = ""
-	this.cur_user_type = 1024
+	this.cur_user_type = models.USER_NORMAL_TYPE
 
 	// Message receive loop.
 	for {
 		_, body, err := ws.ReadMessage()
 		if err != nil {
+			if websocket.IsCloseError(err, WS_CLOSE_ERROR...) {
+				logs.Error("Close Error: %s, cur_user: %s, cur_user_type: %d, conn: %p", err.Error(), this.cur_user, this.cur_user_type, this.ws)
+				ws.Close()
+				this.ws = nil
+				return
+			}
 			logs.Error("Read msg faled from WebSocket. Error:", err.Error())
 			continue
 		}
@@ -198,12 +232,7 @@ func (this *ChatController) _ListUser() {
 
 	users := models.ListUser(start, length)
 	j := this._ConstructReplyJson()
-	if users {
-		j.Set("users", users)
-	} else {
-		j.Set("users", make([]string, 0))
-	}
-
+	j.Set("users", users)
 	this.Reply(j)
 }
 
