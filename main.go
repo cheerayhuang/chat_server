@@ -12,5 +12,5 @@ func main() {
 		beego.BConfig.WebConfig.StaticDir["/swagger"] = "swagger"
 	}
 
-	beego.Run(":5001")
+	beego.Run()
 }
