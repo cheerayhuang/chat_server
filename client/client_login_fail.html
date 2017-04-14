@@ -5,7 +5,6 @@
 <body>
 <title>WebSocket Test</title>
 <script language="javascript"type="text/javascript">
-//var wsUri ="ws://test.sdkbox:6001/websocket";
 var wsUri ="ws://localhost:5001/websocket";
 var output;
 var websocket;
@@ -37,7 +36,7 @@ function onOpen(evt) {
     var body_login = {
         "type" : "login",
         "name" : "admin",
-        "password": "123456",
+        "password": "1234567",
         "version" : 1
     }
 
@@ -68,9 +67,11 @@ function onOpen(evt) {
     }
 
     doSend(JSON.stringify(body_login));
+    /*
     doSend(JSON.stringify(body_add_user));
     doSend(JSON.stringify(body_list_user));
-    //doSend(JSON.stringify(body_del_user));
+    doSend(JSON.stringify(body_del_user));
+    */
 }
 
 function onClose(evt) {
