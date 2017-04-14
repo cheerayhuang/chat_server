@@ -159,7 +159,9 @@ func ListUser(start, length int) []string {
 			logs.Error("db Rows Scan operation failed. Error: ", err.Error())
 			return users
 		}
-		users = append(users, user)
+		if user != "admin" {
+			users = append(users, user)
+		}
 	}
 
 	return users

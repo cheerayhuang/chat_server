@@ -3,7 +3,9 @@ package controllers
 import (
 	"chat_server/models"
 
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
@@ -25,6 +27,11 @@ const (
 const (
 	WS_READ_BUFFER_SIZE  = 1024
 	WS_WRITE_BUFFER_SIZE = 1024
+)
+
+const (
+	WELCOMD_MSG = "Welcom new user \"%s\" to join chatting."
+	BYEBYE_MSG  = "User \"%s\" left chatting."
 )
 
 var (
@@ -56,6 +63,10 @@ var (
 	}
 )
 
+var (
+	k_online_users = make(map[string]*websocket.Conn)
+)
+
 type ChatController struct {
 	beego.Controller
 
@@ -69,6 +80,7 @@ type ChatController struct {
 
 func (this *ChatController) ErrReply(err_code int) {
 	j := simplejson.New()
+	j.Set("type", this.cur_cmd)
 	j.Set("code", err_code)
 	j.Set("reason", ERR_REPLYS[err_code])
 
@@ -81,10 +93,37 @@ func (this *ChatController) Reply(j *simplejson.Json) {
 		if err != nil {
 			logs.Error("MarshalJSON failed.")
 		} else {
-			this.ws.WriteMessage(websocket.TextMessage, data)
+			err := this.ws.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
+				logs.Error("Command \"%s\" Response Faild. Error: ", err.Error())
+			}
 		}
 	} else {
 		logs.Error("Current connetion is lost.")
+	}
+}
+
+func (this *ChatController) SendMsg(j *simplejson.Json, receivers []string) {
+	data, err := j.MarshalJSON()
+	if err != nil {
+		logs.Error("SendMsg MarshalJSON failed. Error: ", err.Error())
+		panic(err)
+	}
+	for _, v := range receivers {
+		if conn, ok := k_online_users[v]; ok {
+			K_Msgs <- Message{receiver: v, msg: data, conn: conn}
+		}
+	}
+}
+
+func (this *ChatController) Broadcast(j *simplejson.Json) {
+	data, err := j.MarshalJSON()
+	if err != nil {
+		logs.Error("SendMsg MarshalJSON failed. Error: ", err.Error())
+		panic(err)
+	}
+	for k, v := range k_online_users {
+		K_Msgs <- Message{receiver: k, msg: data, conn: v}
 	}
 }
 
@@ -106,18 +145,30 @@ func (this *ChatController) WSConnect() {
 	this.cur_user_type = models.USER_NORMAL_TYPE
 
 	// Message receive loop.
+	var err_num = 0
 	for {
+
+		defer func() {
+			delete(k_online_users, this.cur_user)
+			ws.Close()
+			this.ws = nil
+
+		}()
+
 		_, body, err := ws.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, WS_CLOSE_ERROR...) {
 				logs.Error("Close Error: %s, cur_user: %s, cur_user_type: %d, conn: %p", err.Error(), this.cur_user, this.cur_user_type, this.ws)
-				ws.Close()
-				this.ws = nil
 				return
 			}
 			logs.Error("Read msg faled from WebSocket. Error:", err.Error())
+			err_num++
+			if err_num >= 20 {
+				return
+			}
 			continue
 		}
+		err_num = 0
 
 		this.body_json, err = simplejson.NewJson(body)
 		if err != nil {
@@ -145,6 +196,9 @@ func (this *ChatController) WSConnect() {
 
 		case "listuser":
 			this._ListUser()
+
+		case "sendmsg":
+			this._SendMsg()
 
 		default:
 			logs.Error("Unknown cmd: ", this.cur_cmd)
@@ -174,6 +228,16 @@ func (this *ChatController) _Login() {
 			j.Set("admin", true)
 		}
 		this.Reply(j)
+
+		// update online conn
+		if _, ok := k_online_users[this.cur_user]; ok {
+			k_online_users[this.cur_user].Close()
+		}
+		k_online_users[this.cur_user] = this.ws
+
+		// send welcome msg
+		j = this._ConstructMsgJson(_WelcomMsg(name))
+		this.Broadcast(j)
 	} else {
 		this.ErrReply(LOGIN_ERR)
 	}
@@ -236,6 +300,27 @@ func (this *ChatController) _ListUser() {
 	this.Reply(j)
 }
 
+func (this *ChatController) _SendMsg() {
+	if this.cur_user == "" {
+		this.ErrReply(PERMISSION_ERR)
+		return
+	}
+
+	receivers := this.body_json.Get("receivers").MustStringArray()
+	if len(receivers) == 0 {
+		logs.Error("\"receivers\" array is empty.")
+		this.ErrReply(MISS_PARAM_ERR)
+		return
+	}
+	msg := this.body_json.Get("msg").MustString()
+
+	j := this._ConstructReplyJson()
+	this.Reply(j)
+
+	j = this._ConstructMsgJson(msg)
+	this.SendMsg(j, receivers)
+}
+
 func (this *ChatController) _ConstructReplyJson() *simplejson.Json {
 	j := simplejson.New()
 	j.Set("version", 1)
@@ -243,4 +328,26 @@ func (this *ChatController) _ConstructReplyJson() *simplejson.Json {
 	j.Set("type", this.cur_cmd)
 
 	return j
+}
+
+func (this *ChatController) _ConstructMsgJson(msg string) *simplejson.Json {
+	j := simplejson.New()
+	j.Set("version", 1)
+	j.Set("sender", this.cur_user)
+	j.Set("type", "recvmsg")
+	j.Set("msg", msg)
+
+	//time_unix := time.Now().Format(time.RFC1123Z)
+	time_unix := time.Now().Unix()
+	j.Set("time", time_unix)
+
+	return j
+}
+
+func _WelcomMsg(name string) string {
+	return fmt.Sprintf(WELCOMD_MSG, name)
+}
+
+func _ByeMsg(name string) string {
+	return fmt.Sprintf(BYEBYE_MSG, name)
 }
