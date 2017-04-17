@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<head>
+<meta charset="utf-8" />
+</head>
+<body>
+<title>WebSocket Test</title>
+<script language="javascript"type="text/javascript">
+//var wsUri ="ws://test.sdkbox:6001/websocket";
+var wsUri ="ws://localhost:5001/websocket";
+var output;
+var websocket;
+
+function init() {
+    output = document.getElementById("output");
+    testWebSocket();
+}
+
+function testWebSocket() {
+    websocket = new WebSocket(wsUri);
+    websocket.onopen = function(evt) {
+        onOpen(evt)
+    };
+    websocket.onclose = function(evt) {
+        onClose(evt)
+    };
+    websocket.onmessage = function(evt) {
+        onMessage(evt)
+    };
+    websocket.onerror = function(evt) {
+        onError(evt)
+    };
+}
+
+function onOpen(evt) {
+    writeToScreen("CONNECTED");
+    // login
+    var body_login = {
+        "type" : "login",
+        "name" : "admin3",
+        "password": "123456",
+        "version" : 1
+    }
+
+    // adduser
+    var body_add_user = {
+        "type": "adduser",
+        "name": "admin3_user1",
+        "password": "123456",
+        "version": 1
+    }
+
+    var body_add_user2 = {
+        "type": "adduser",
+        "name": "admin3_user2",
+        "password": "123456",
+        "version": 1
+    }
+
+    var body_add_user3 = {
+        "type": "adduser",
+        "name": "admin3_user3",
+        "password": "123456",
+        "version": 1
+    }
+
+    // list user
+    var body_list_user = {
+        "type": "listuser",
+        "start": 0,
+        "length": 100,
+        "version": 1
+    }
+
+    // del user
+    var body_del_user = {
+        "type": "deluser",
+        "removeall": false,
+        "users": [
+            "admin3_user1"
+        ],
+        "version": 1
+    }
+
+    doSend(JSON.stringify(body_login));
+    doSend(JSON.stringify(body_add_user));
+    doSend(JSON.stringify(body_add_user2));
+    doSend(JSON.stringify(body_add_user3));
+    doSend(JSON.stringify(body_list_user));
+    doSend(JSON.stringify(body_del_user));
+}
+
+function onClose(evt) {
+    writeToScreen("DISCONNECTED");
+}
+
+function onMessage(evt) {
+    writeToScreen('<span style="color: blue;">RESPONSE: '+ evt.data+'</span>');
+    //websocket.close();
+}
+
+function onError(evt) {
+    writeToScreen('<span style="color: red;">ERROR:</span> '+ evt.data);
+}
+
+function doSend(message) {
+    writeToScreen("SENT: " + message);
+    websocket.send(message);
+}
+
+function writeToScreen(message) {
+    var pre = document.createElement("p");
+    pre.style.wordWrap = "break-word";
+    pre.innerHTML = message;
+    output.appendChild(pre);
+}
+
+window.addEventListener("load", init, false);
+</script>
+
+<h2>WebSocket Test</h2>
+<div id="output"></div>
+</body>
+</html>
