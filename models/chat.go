@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	USER_ADMIN_TYPE  = 0
+	USER_ROOT_TYPE   = 0
+	USER_ADMIN_TYPE  = 1
 	USER_NORMAL_TYPE = 1024
 )
 
@@ -28,7 +29,6 @@ func Init() {
 }
 
 func UserLogin(name, password string) (int64, int) {
-
 	logs.Debug("login name: ", name)
 	logs.Debug("password: ", password)
 
@@ -74,7 +74,8 @@ func UserLogin(name, password string) (int64, int) {
 	return 0, 0
 }
 
-func AddUser(name, password string) int64 {
+func AddUser(cur_id int64, cur_type int, name, password string) int64 {
+	logs.Debug("add user cur_id: %d, cur_type: %d", cur_id, cur_type)
 	logs.Debug("add user name: ", name)
 	logs.Debug("add user passwd: ", password)
 
@@ -91,9 +92,13 @@ func AddUser(name, password string) int64 {
 
 	if !is_exist {
 		data := map[string]interface{}{
-			"user_name": name,
-			"passwd":    password,
-			"user_type": USER_NORMAL_TYPE,
+			"user_name":  name,
+			"passwd":     password,
+			"user_type":  USER_NORMAL_TYPE,
+			"created_by": cur_id,
+		}
+		if cur_type == USER_ROOT_TYPE {
+			data["user_type"] = USER_ADMIN_TYPE
 		}
 		id, err := mysql.Insert(data)
 		if err != nil {
@@ -107,7 +112,8 @@ func AddUser(name, password string) int64 {
 	return 0
 }
 
-func DeleteUser(users []string, is_remove_all bool) bool {
+func DeleteUser(cur_id int64, cur_type int, users []string, is_remove_all bool) bool {
+	logs.Debug("delete user cur_id: %d, cur_type: %d", cur_id, cur_type)
 	logs.Debug("delete user, is_remove_all: ", is_remove_all)
 	logs.Debug("delete users: ", users)
 
@@ -117,7 +123,12 @@ func DeleteUser(users []string, is_remove_all bool) bool {
 	mysql.(*db.DBase).SetDefaultTable("chat_users")
 
 	if is_remove_all {
-		err := mysql.Delete()
+		var err error
+		if cur_type == USER_ROOT_TYPE {
+			err = mysql.Where("user_name !=", "root").Delete()
+		} else {
+			err = mysql.Where("created_by", cur_id).Delete()
+		}
 		if err != nil {
 			logs.Error("db Delete operation failed. Error: ", err.Error())
 			return false
@@ -136,7 +147,8 @@ func DeleteUser(users []string, is_remove_all bool) bool {
 	return true
 }
 
-func ListUser(start, length int) []string {
+func ListUser(id int64, start, length int) []string {
+	logs.Debug("list user cur_id: %d", id)
 	logs.Debug("list user, start: ", start)
 	logs.Debug("list user, length: ", length)
 
@@ -146,7 +158,7 @@ func ListUser(start, length int) []string {
 	mysql.(*db.DBase).SetDefaultTable("chat_users")
 
 	users := make([]string, 0)
-	rows, err := mysql.Select("user_name").Limit(start, length).Query()
+	rows, err := mysql.Select("user_name").Where("created_by", id).Limit(start, length).Query()
 	if err != nil {
 		logs.Error("db Query operation failed. Error: ", err.Error())
 		return users
@@ -159,9 +171,7 @@ func ListUser(start, length int) []string {
 			logs.Error("db Rows Scan operation failed. Error: ", err.Error())
 			return users
 		}
-		if user != "admin" {
-			users = append(users, user)
-		}
+		users = append(users, user)
 	}
 
 	return users

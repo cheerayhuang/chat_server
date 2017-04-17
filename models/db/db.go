@@ -216,6 +216,14 @@ func (this *DBase) Select(fields ...string) *DBase {
 }
 
 func (this *DBase) Where(field string, value interface{}) *DBase {
+	return this._Where(field, value, false)
+}
+
+func (this *DBase) OrWhere(field string, value interface{}) *DBase {
+	return this._Where(field, value, true)
+}
+
+func (this *DBase) _Where(field string, value interface{}, or bool) *DBase {
 	is_first := false
 	if !strings.Contains(this.q_stat, "WHERE") {
 		is_first = true
@@ -223,9 +231,17 @@ func (this *DBase) Where(field string, value interface{}) *DBase {
 
 	var where_st string
 	if is_first {
-		where_st += " WHERE `" + field + "` = "
+		where_st += " WHERE " + field
 	} else {
-		where_st += " AND `" + field + "` = "
+		if !or {
+			where_st += " AND " + field
+		} else {
+			where_st += " OR " + field
+		}
+	}
+
+	if _, ok := _GetWhereOperator(field); !ok {
+		where_st += " = "
 	}
 
 	switch v := value.(type) {
@@ -234,6 +250,9 @@ func (this *DBase) Where(field string, value interface{}) *DBase {
 	case int:
 	case int64:
 		where_st += strconv.FormatInt(int64(v), 10)
+	case float32:
+	case float64:
+		where_st += strconv.FormatFloat(float64(v), 'f', -1, 64)
 	}
 
 	this.q_stat += where_st
@@ -258,4 +277,32 @@ func (this *DBase) Limit(start, length int) *DBase {
 func (this *DBase) _ResetStat() {
 	this.q_stat = "SELECT * FROM [table]"
 	this.d_stat = "DELETE FROM [table]"
+}
+
+func _GetWhereOperator(field string) (string, bool) {
+	if strings.Contains(field, ">=") {
+		return ">=", true
+	}
+
+	if strings.Contains(field, "<=") {
+		return "<=", true
+	}
+
+	if strings.Contains(field, "!=") {
+		return "!=", true
+	}
+
+	if strings.Contains(field, "=") {
+		return "=", true
+	}
+
+	if strings.Contains(field, ">") {
+		return ">", true
+	}
+
+	if strings.Contains(field, ">") {
+		return "<", true
+	}
+
+	return "", false
 }

@@ -71,6 +71,7 @@ type ChatController struct {
 	beego.Controller
 
 	cur_cmd       string
+	cur_user_id   int64
 	cur_user      string
 	cur_user_type int
 	ws            *websocket.Conn
@@ -223,10 +224,9 @@ func (this *ChatController) _Login() {
 	if id, user_type := models.UserLogin(name, password); id != 0 {
 		this.cur_user = name
 		this.cur_user_type = user_type
+		this.cur_user_id = id
 		j := this._ConstructReplyJson()
-		if user_type == 0 {
-			j.Set("admin", true)
-		}
+		j.Set("usertype", user_type)
 		this.Reply(j)
 
 		// update online conn
@@ -244,7 +244,7 @@ func (this *ChatController) _Login() {
 }
 
 func (this *ChatController) _AddUser() {
-	if this.cur_user == "" || this.cur_user_type != 0 {
+	if this.cur_user == "" || this.cur_user_type >= models.USER_NORMAL_TYPE {
 		this.ErrReply(PERMISSION_ERR)
 		return
 	}
@@ -252,7 +252,7 @@ func (this *ChatController) _AddUser() {
 	name := this.body_json.Get("name").MustString()
 	password := this.body_json.Get("password").MustString()
 
-	if id := models.AddUser(name, password); id != 0 {
+	if id := models.AddUser(this.cur_user_id, this.cur_user_type, name, password); id != 0 {
 		j := this._ConstructReplyJson()
 		this.Reply(j)
 	} else {
@@ -261,7 +261,7 @@ func (this *ChatController) _AddUser() {
 }
 
 func (this *ChatController) _DeleteUser() {
-	if this.cur_user == "" || this.cur_user_type != 0 {
+	if this.cur_user == "" || this.cur_user_type >= models.USER_NORMAL_TYPE {
 		this.ErrReply(PERMISSION_ERR)
 		return
 	}
@@ -277,7 +277,7 @@ func (this *ChatController) _DeleteUser() {
 		}
 	}
 
-	if models.DeleteUser(users, is_remove_all) {
+	if models.DeleteUser(this.cur_user_id, this.cur_user_type, users, is_remove_all) {
 		j := this._ConstructReplyJson()
 		this.Reply(j)
 	} else {
@@ -286,7 +286,7 @@ func (this *ChatController) _DeleteUser() {
 }
 
 func (this *ChatController) _ListUser() {
-	if this.cur_user == "" {
+	if this.cur_user == "" || this.cur_user_type >= models.USER_NORMAL_TYPE {
 		this.ErrReply(PERMISSION_ERR)
 		return
 	}
@@ -294,14 +294,14 @@ func (this *ChatController) _ListUser() {
 	start := this.body_json.Get("start").MustInt()
 	length := this.body_json.Get("length").MustInt()
 
-	users := models.ListUser(start, length)
+	users := models.ListUser(this.cur_user_id, start, length)
 	j := this._ConstructReplyJson()
 	j.Set("users", users)
 	this.Reply(j)
 }
 
 func (this *ChatController) _SendMsg() {
-	if this.cur_user == "" {
+	if this.cur_user == "" || this.cur_user_type >= models.USER_NORMAL_TYPE {
 		this.ErrReply(PERMISSION_ERR)
 		return
 	}
