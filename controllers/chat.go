@@ -5,6 +5,7 @@ import (
 
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/astaxie/beego"
@@ -27,6 +28,12 @@ const (
 const (
 	WS_READ_BUFFER_SIZE  = 1024
 	WS_WRITE_BUFFER_SIZE = 1024
+)
+
+var (
+	//HISTORY_MSG_DURATION = beego.AppConfig.String("history_msg_duration")
+	HISTORY_MSG_DURATION = time.Hour
+	//HISTORY_MSG_DURATION = 5 * time.Minute
 )
 
 const (
@@ -65,6 +72,7 @@ var (
 
 var (
 	k_online_users = make(map[string]*websocket.Conn)
+	g_history_msgs = make(map[string]map[int64][]Message)
 )
 
 type ChatController struct {
@@ -104,7 +112,7 @@ func (this *ChatController) Reply(j *simplejson.Json) {
 	}
 }
 
-func (this *ChatController) SendMsg(j *simplejson.Json, receivers []string) {
+func (this *ChatController) SendMsg(j *simplejson.Json, unix_ns int64, receivers []string) {
 	data, err := j.MarshalJSON()
 	if err != nil {
 		logs.Error("SendMsg MarshalJSON failed. Error: ", err.Error())
@@ -113,14 +121,48 @@ func (this *ChatController) SendMsg(j *simplejson.Json, receivers []string) {
 	for _, v := range receivers {
 		if conn, ok := k_online_users[v]; ok {
 			K_Msgs <- Message{receiver: v, msg: data, conn: conn}
+		} else {
+			if _, ok := g_history_msgs[v]; !ok {
+				g_history_msgs[v] = make(map[int64][]Message)
+			}
+			g_history_msgs[v][unix_ns] = append(g_history_msgs[v][unix_ns], Message{receiver: v, msg: data, conn: nil})
 		}
 	}
+}
+
+type _Times []int64
+
+func (t _Times) Len() int           { return len(t) }
+func (t _Times) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
+func (t _Times) Less(i, j int) bool { return t[i] < t[j] }
+
+func (this *ChatController) SendHistoryMsg(cur_unix_ns, hour_ago_unix_ns int64) {
+	history_msgs, ok := g_history_msgs[this.cur_user]
+	if !ok {
+		return
+	}
+
+	var times _Times
+	for t, _ := range history_msgs {
+		if t >= hour_ago_unix_ns && t < cur_unix_ns {
+			times = append(times, t)
+		}
+	}
+	sort.Sort(times)
+
+	for _, t := range times {
+		for _, m := range history_msgs[t] {
+			m.conn = this.ws
+			K_Msgs <- m
+		}
+	}
+
 }
 
 func (this *ChatController) Broadcast(j *simplejson.Json) {
 	data, err := j.MarshalJSON()
 	if err != nil {
-		logs.Error("SendMsg MarshalJSON failed. Error: ", err.Error())
+		logs.Error("Broadcast MarshalJSON failed. Error: ", err.Error())
 		panic(err)
 	}
 	for k, v := range k_online_users {
@@ -236,8 +278,13 @@ func (this *ChatController) _Login() {
 		k_online_users[this.cur_user] = this.ws
 
 		// send welcome msg
-		j = this._ConstructMsgJson(_WelcomMsg(name))
+		j, _ = this._ConstructMsgJson(_WelcomMsg(name))
 		this.Broadcast(j)
+
+		// send history msgs to current user
+		cur_unix_ns := time.Now().UnixNano()
+		hour_ago_unix_ns := cur_unix_ns - int64(HISTORY_MSG_DURATION)
+		this.SendHistoryMsg(cur_unix_ns, hour_ago_unix_ns)
 	} else {
 		this.ErrReply(LOGIN_ERR)
 	}
@@ -301,7 +348,7 @@ func (this *ChatController) _ListUser() {
 }
 
 func (this *ChatController) _SendMsg() {
-	if this.cur_user == "" || this.cur_user_type >= models.USER_NORMAL_TYPE {
+	if this.cur_user == "" /*|| this.cur_user_type >= models.USER_NORMAL_TYPE*/ {
 		this.ErrReply(PERMISSION_ERR)
 		return
 	}
@@ -317,8 +364,8 @@ func (this *ChatController) _SendMsg() {
 	j := this._ConstructReplyJson()
 	this.Reply(j)
 
-	j = this._ConstructMsgJson(msg)
-	this.SendMsg(j, receivers)
+	j, unix_ns := this._ConstructMsgJson(msg)
+	this.SendMsg(j, unix_ns, receivers)
 }
 
 func (this *ChatController) _ConstructReplyJson() *simplejson.Json {
@@ -330,18 +377,17 @@ func (this *ChatController) _ConstructReplyJson() *simplejson.Json {
 	return j
 }
 
-func (this *ChatController) _ConstructMsgJson(msg string) *simplejson.Json {
+func (this *ChatController) _ConstructMsgJson(msg string) (*simplejson.Json, int64) {
 	j := simplejson.New()
 	j.Set("version", 1)
 	j.Set("sender", this.cur_user)
 	j.Set("type", "recvmsg")
 	j.Set("msg", msg)
 
-	//time_unix := time.Now().Format(time.RFC1123Z)
-	time_unix := time.Now().Unix()
-	j.Set("time", time_unix)
+	unix_ns := time.Now().UnixNano()
+	//j.Set("timestamp", unix_ns)
 
-	return j
+	return j, unix_ns
 }
 
 func _WelcomMsg(name string) string {

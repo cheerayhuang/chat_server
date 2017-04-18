@@ -12,7 +12,7 @@ type Message struct {
 }
 
 var (
-	K_Msgs = make(chan Message, 1024)
+	K_Msgs = make(chan Message, 2048)
 )
 
 func init() {
