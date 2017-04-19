@@ -146,6 +146,8 @@ func (this *ChatController) SendHistoryMsg(cur_unix_ns, hour_ago_unix_ns int64) 
 	for t, _ := range history_msgs {
 		if t >= hour_ago_unix_ns && t < cur_unix_ns {
 			times = append(times, t)
+		} else {
+			delete(history_msgs, t)
 		}
 	}
 	sort.Sort(times)
@@ -155,8 +157,10 @@ func (this *ChatController) SendHistoryMsg(cur_unix_ns, hour_ago_unix_ns int64) 
 			m.conn = this.ws
 			K_Msgs <- m
 		}
+		delete(history_msgs, t)
 	}
 
+	delete(g_history_msgs, this.cur_user)
 }
 
 func (this *ChatController) Broadcast(j *simplejson.Json) {
