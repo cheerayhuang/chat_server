@@ -6,6 +6,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 
+	"fmt"
 	"shiftred/error"
 	"strconv"
 	"strings"
@@ -14,20 +15,12 @@ import (
 )
 
 type DB interface {
-	// statement
-	Select(fields ...string) *DBase
-	Where(field string, value interface{}) *DBase
-	//OrWhere(field string, value interface{})
-	From(table string) *DBase
-	Limit(start, length int) *DBase
-
-	// operation
-	Query() (*sql.Rows, error)
-	Insert(values map[string]interface{}) (int64, error)
-	Delete() error
-	Update()
-	Count() (int64, error)
-	Exist() (bool, error)
+	Query(stat *DBStat) (*sql.Rows, error)
+	Insert(values map[string]interface{}, stat *DBStat) (int64, error)
+	Delete(stat *DBStat) error
+	Update(values map[string]interface{}, stat *DBStat) error
+	Count(stat *DBStat) (int64, error)
+	Exist(stat *DBStat) (bool, error)
 	Close() error
 }
 
@@ -39,13 +32,15 @@ type DBase struct {
 	host     string
 	port     string
 	table    string
-	fields   []string
 	db       *sql.DB
-	tm_start int64
-	tm_end   int64
+}
 
-	q_stat string
+type DBStat struct {
+	table string
+
 	d_stat string
+	q_stat string
+	u_stat string
 }
 
 func New(db, user, pwd, database, host, port string) (DB, error) {
@@ -76,13 +71,24 @@ func New(db, user, pwd, database, host, port string) (DB, error) {
 		}
 	}
 
+	return r, nil
+}
+
+func NewDBStat(table string) (*DBStat, error) {
+	if table == "" {
+		return nil, fmt.Errorf("Create DBStat failed, table name is an empty string.")
+	}
+
+	r := new(DBStat)
+	r.table = table
 	r.q_stat = "SELECT * FROM [table]"
 	r.d_stat = "DELETE FROM [table]"
+	r.u_stat = "UPDATE [table] SET [vars]"
 
 	return r, nil
 }
 
-func (this *DBase) SetDefaultTable(name string) {
+func (this *DBStat) SetTable(name string) {
 	if name == "" {
 		return
 	}
@@ -90,14 +96,11 @@ func (this *DBase) SetDefaultTable(name string) {
 	this.table = name
 }
 
-func (this *DBase) Query() (*sql.Rows, error) {
-	if strings.Contains(this.q_stat, "[table]") {
-		this.q_stat = strings.Replace(this.q_stat, "[table]", this.table, 1)
-	}
-	logs.Debug("DB Query Sql: ", this.q_stat)
+func (this *DBase) Query(stat *DBStat) (*sql.Rows, error) {
+	logs.Debug("DB Query Sql: ", stat.q_stat)
 
-	defer this._ResetStat()
-	rows, err := this.db.Query(this.q_stat)
+	defer stat.ResetStat()
+	rows, err := this.db.Query(stat.q_stat)
 	if err != nil {
 		return nil, err
 	}
@@ -105,17 +108,14 @@ func (this *DBase) Query() (*sql.Rows, error) {
 	return rows, nil
 }
 
-func (this *DBase) Count() (int64, error) {
+func (this *DBase) Count(stat *DBStat) (int64, error) {
 	var count int64
 
-	if strings.Contains(this.q_stat, "[table]") {
-		this.q_stat = strings.Replace(this.q_stat, "[table]", this.table, 1)
-	}
-	this.q_stat = strings.Replace(this.q_stat, "*", "COUNT(*)", 1)
-	logs.Debug("DB Count Sql: ", this.q_stat)
+	stat.q_stat = strings.Replace(stat.q_stat, "*", "COUNT(*)", 1)
+	logs.Debug("DB Count Sql: ", stat.q_stat)
 
-	defer this._ResetStat()
-	err := this.db.QueryRow(this.q_stat).Scan(&count)
+	defer stat.ResetStat()
+	err := this.db.QueryRow(stat.q_stat).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -123,8 +123,8 @@ func (this *DBase) Count() (int64, error) {
 	return count, nil
 }
 
-func (this *DBase) Exist() (bool, error) {
-	count, err := this.Count()
+func (this *DBase) Exist(stat *DBStat) (bool, error) {
+	count, err := this.Count(stat)
 	if err != nil {
 		return false, err
 	}
@@ -135,14 +135,11 @@ func (this *DBase) Exist() (bool, error) {
 	return false, nil
 }
 
-func (this *DBase) Delete() error {
-	if strings.Contains(this.d_stat, "[table]") {
-		this.d_stat = strings.Replace(this.d_stat, "[table]", this.table, 1)
-	}
-	logs.Debug("DB Delete Sql: ", this.d_stat)
+func (this *DBase) Delete(stat *DBStat) error {
+	logs.Debug("DB Delete Sql: ", stat.d_stat)
 
-	defer this._ResetStat()
-	stmt, err := this.db.Prepare(this.d_stat)
+	defer stat.ResetStat()
+	stmt, err := this.db.Prepare(stat.d_stat)
 	if err != nil {
 		return err
 	}
@@ -156,11 +153,46 @@ func (this *DBase) Delete() error {
 	return nil
 }
 
-func (this *DBase) Update() {
+func (this *DBase) Update(values map[string]interface{}, stat *DBStat) error {
+	var set_st string
 
+	for k, v := range values {
+		set_st += (k + " = ")
+		switch val := v.(type) {
+		case string:
+			set_st += "'" + val + "'"
+		case int:
+			set_st += strconv.FormatInt(int64(val), 10)
+		case int64:
+			set_st += strconv.FormatInt(int64(val), 10)
+		case float32:
+			set_st += strconv.FormatFloat(float64(val), 'f', -1, 64)
+		case float64:
+			set_st += strconv.FormatFloat(float64(val), 'f', -1, 64)
+		}
+		set_st += ", "
+	}
+	set_st = strings.TrimRight(set_st, ", ")
+
+	stat.u_stat = strings.Replace(stat.u_stat, "[vars]", set_st, 1)
+	logs.Debug("DB Update Sql: ", stat.u_stat)
+
+	defer stat.ResetStat()
+	stmt, err := this.db.Prepare(stat.u_stat)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (this *DBase) Insert(values map[string]interface{}) (int64, error) {
+func (this *DBase) Insert(values map[string]interface{}, stat *DBStat) (int64, error) {
 	l := len(values)
 	if l == 0 {
 		return 0, MyErr.New(MyErr.DB_INSERT_MISS_VALUES, "miss values in insert statement.")
@@ -183,7 +215,7 @@ func (this *DBase) Insert(values map[string]interface{}) (int64, error) {
 	marks_str := strings.Join(marks, ",")
 	keys_str := strings.Join(keys, ",")
 	keys_str = "(" + keys_str + ")"
-	stmt_str := "INSERT INTO " + this.table + keys_str + " VALUES(" + marks_str + ")"
+	stmt_str := "INSERT INTO " + stat.table + keys_str + " VALUES(" + marks_str + ")"
 	logs.Debug("DB Insert Sql: ", stmt_str)
 	stmt, err := this.db.Prepare(stmt_str)
 	if err != nil {
@@ -204,26 +236,28 @@ func (this *DBase) Insert(values map[string]interface{}) (int64, error) {
 	return row_count, nil
 }
 
+// it is rarely necessary to call it,
+// as golang demand sql driver should implemnt a connections pool for Database.
 func (this *DBase) Close() error {
 	return this.db.Close()
 }
 
-func (this *DBase) Select(fields ...string) *DBase {
+func (this *DBStat) Select(fields ...string) *DBStat {
 	var fields_st = strings.Join(fields, ",")
 	this.q_stat = strings.Replace(this.q_stat, "*", fields_st, 1)
 
 	return this
 }
 
-func (this *DBase) Where(field string, value interface{}) *DBase {
+func (this *DBStat) Where(field string, value interface{}) *DBStat {
 	return this._Where(field, value, false)
 }
 
-func (this *DBase) OrWhere(field string, value interface{}) *DBase {
+func (this *DBStat) OrWhere(field string, value interface{}) *DBStat {
 	return this._Where(field, value, true)
 }
 
-func (this *DBase) _Where(field string, value interface{}, or bool) *DBase {
+func (this *DBStat) _Where(field string, value interface{}, or bool) *DBStat {
 	is_first := false
 	if !strings.Contains(this.q_stat, "WHERE") {
 		is_first = true
@@ -248,35 +282,40 @@ func (this *DBase) _Where(field string, value interface{}, or bool) *DBase {
 	case string:
 		where_st += "'" + v + "'"
 	case int:
+		where_st += strconv.FormatInt(int64(v), 10)
 	case int64:
 		where_st += strconv.FormatInt(int64(v), 10)
 	case float32:
+		where_st += strconv.FormatFloat(float64(v), 'f', -1, 64)
 	case float64:
 		where_st += strconv.FormatFloat(float64(v), 'f', -1, 64)
 	}
 
 	this.q_stat += where_st
 	this.d_stat += where_st
+	this.u_stat += where_st
 
 	return this
 }
 
-func (this *DBase) From(table string) *DBase {
-	this.q_stat = strings.Replace(this.q_stat, "[table]", table, 1)
-	this.d_stat = strings.Replace(this.d_stat, "[table]", table, 1)
+func (this *DBStat) From() *DBStat {
+	this.q_stat = strings.Replace(this.q_stat, "[table]", this.table, 1)
+	this.d_stat = strings.Replace(this.d_stat, "[table]", this.table, 1)
+	this.u_stat = strings.Replace(this.u_stat, "[table]", this.table, 1)
 
 	return this
 }
 
-func (this *DBase) Limit(start, length int) *DBase {
+func (this *DBStat) Limit(start, length int) *DBStat {
 	this.q_stat += " LIMIT " + strconv.FormatInt(int64(start), 10) + ", " + strconv.FormatInt(int64(length), 10)
 
 	return this
 }
 
-func (this *DBase) _ResetStat() {
+func (this *DBStat) ResetStat() {
 	this.q_stat = "SELECT * FROM [table]"
 	this.d_stat = "DELETE FROM [table]"
+	this.u_stat = "UPDATE [table] SET [vars]"
 }
 
 func _GetWhereOperator(field string) (string, bool) {

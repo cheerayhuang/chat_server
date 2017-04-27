@@ -35,16 +35,20 @@ func UserLogin(name, password string) (int64, int) {
 	if _, ok := mysql.(*db.DBase); !ok {
 		Init()
 	}
-	mysql.(*db.DBase).SetDefaultTable("chat_users")
+	stat, err := db.NewDBStat("chat_users")
+	if err != nil {
+		logs.Error("NewDBStat failed. Error: ", err.Error())
+		return 0, 0
+	}
 
-	is_exist, err := mysql.Where("user_name", name).Exist()
+	is_exist, err := mysql.Exist(stat.Where("user_name", name).From())
 	if err != nil {
 		logs.Error("db Exist operation failed. Error: ", err.Error())
 		return 0, 0
 	}
 
 	if is_exist {
-		rows, err := mysql.Select("id", "user_name", "passwd", "user_type").Where("user_name", name).Query()
+		rows, err := mysql.Query(stat.Select("id", "user_name", "passwd", "user_type").Where("user_name", name).From())
 		if err != nil {
 			logs.Error("db Query operation failed. Error: ", err.Error())
 			return 0, 0
@@ -82,9 +86,13 @@ func AddUser(cur_id int64, cur_type int, name, password string) int64 {
 	if _, ok := mysql.(*db.DBase); !ok {
 		Init()
 	}
-	mysql.(*db.DBase).SetDefaultTable("chat_users")
+	stat, err := db.NewDBStat("chat_users")
+	if err != nil {
+		logs.Error("NewDBStat failed. Error: ", err.Error())
+		return 0
+	}
 
-	is_exist, err := mysql.Where("user_name", name).Exist()
+	is_exist, err := mysql.Exist(stat.Where("user_name", name).From())
 	if err != nil {
 		logs.Error("db Exist operation failed. Error: ", err.Error())
 		return 0
@@ -100,7 +108,7 @@ func AddUser(cur_id int64, cur_type int, name, password string) int64 {
 		if cur_type == USER_ROOT_TYPE {
 			data["user_type"] = USER_ADMIN_TYPE
 		}
-		id, err := mysql.Insert(data)
+		id, err := mysql.Insert(data, stat)
 		if err != nil {
 			logs.Error("db Insert operation failed. Error: ", err.Error())
 			return 0
@@ -120,14 +128,18 @@ func DeleteUser(cur_id int64, cur_type int, users []string, is_remove_all bool) 
 	if _, ok := mysql.(*db.DBase); !ok {
 		Init()
 	}
-	mysql.(*db.DBase).SetDefaultTable("chat_users")
+	stat, err := db.NewDBStat("chat_users")
+	if err != nil {
+		logs.Error("NewDBStat failed. Error: ", err.Error())
+		return false
+	}
 
 	if is_remove_all {
 		var err error
 		if cur_type == USER_ROOT_TYPE {
-			err = mysql.Where("user_name !=", "root").Delete()
+			err = mysql.Delete(stat.Where("user_name !=", "root").From())
 		} else {
-			err = mysql.Where("created_by", cur_id).Delete()
+			err = mysql.Delete(stat.Where("created_by", cur_id).From())
 		}
 		if err != nil {
 			logs.Error("db Delete operation failed. Error: ", err.Error())
@@ -137,7 +149,10 @@ func DeleteUser(cur_id int64, cur_type int, users []string, is_remove_all bool) 
 	}
 
 	for _, v := range users {
-		err := mysql.Where("user_name", v).Delete()
+		// TODO: here is a situation NOT to handle,
+		// when deleting a admin user via root account,
+		// the normal users under this admin should be also deleted.
+		err := mysql.Delete(stat.Where("user_name", v).From())
 		if err != nil {
 			logs.Error("db Delete operation failed. Error: ", err.Error())
 			return false
@@ -152,13 +167,18 @@ func ListUser(id int64, start, length int) []string {
 	logs.Debug("list user, start: ", start)
 	logs.Debug("list user, length: ", length)
 
+	users := make([]string, 0)
+
 	if _, ok := mysql.(*db.DBase); !ok {
 		Init()
 	}
-	mysql.(*db.DBase).SetDefaultTable("chat_users")
+	stat, err := db.NewDBStat("chat_users")
+	if err != nil {
+		logs.Error("NewDBStat failed. Error: ", err.Error())
+		return users
+	}
 
-	users := make([]string, 0)
-	rows, err := mysql.Select("user_name").Where("created_by", id).Limit(start, length).Query()
+	rows, err := mysql.Query(stat.Select("user_name").Where("created_by", id).Limit(start, length).From())
 	if err != nil {
 		logs.Error("db Query operation failed. Error: ", err.Error())
 		return users
