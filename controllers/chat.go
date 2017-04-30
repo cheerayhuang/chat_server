@@ -282,8 +282,8 @@ func (this *ChatController) _Login() {
 		k_online_users[this.cur_user] = this.ws
 
 		// send welcome msg
-		j, _ = this._ConstructMsgJson(_WelcomMsg(name))
-		this.Broadcast(j)
+		//j, _ = this._ConstructMsgJson(_WelcomMsg(name))
+		//this.Broadcast(j)
 
 		// send history msgs to current user
 		cur_unix_ns := time.Now().UnixNano()
